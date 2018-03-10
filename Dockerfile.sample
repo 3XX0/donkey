@@ -1,0 +1,9 @@
+FROM alpine
+
+COPY donkey /usr/local/bin/
+
+ARG FOO
+RUN donkey get $FOO
+
+ARG BAR
+RUN donkey get $BAR sh -c 'cat $DONKEY_FILE'
