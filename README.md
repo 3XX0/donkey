@@ -43,6 +43,5 @@ make
 
 With Docker:
 ```
-docker build -t donkey -f Dockerfile .
-docker run donkey > donkey && chmod +x donkey
+make docker
 ```

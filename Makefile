@@ -2,7 +2,7 @@ prefix      ?= /usr/local
 exec_prefix ?= $(prefix)
 bindir      ?= $(exec_prefix)/bin
 
-.PHONY: donkey clean install uninstall
+.PHONY: donkey clean install uninstall docker
 
 CPPFLAGS +=  -D_FORTIFY_SOURCE=2
 CFLAGS   += -static -s -std=c11 -pedantic -O2 -fstack-protector -Wall -Wextra -Wcast-align -Wpointer-arith \
@@ -21,3 +21,8 @@ install: donkey
 
 uninstall:
 	rm -f $(DESTDIR)$(bindir)/donkey
+
+docker:
+	docker build -t donkey:1.0.0 .
+	docker run --rm donkey:1.0.0 > donkey
+	chmod +x donkey
