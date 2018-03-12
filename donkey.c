@@ -36,6 +36,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#define VERSION "1.0.0"
+
 #ifndef TMP_DIR
 # define TMP_DIR "/dev/shm"
 #endif
@@ -316,6 +318,7 @@ main(int argc, const char *argv[])
                         donkey_get(argv[2], &argv[3]);
         }
 
-        fprintf(stderr, "usage: %s (set <filename> | get <id> [<command>])\n", argv[0]);
+        fprintf(stderr, "version: %s\n", VERSION);
+        fprintf(stderr, "usage: %s (set <filename> | get <id> [<command>])\n", basename(argv[0]));
         return (1);
 }
