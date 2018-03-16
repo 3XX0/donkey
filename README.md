@@ -10,18 +10,20 @@ It does so while trying to minimize the exposure of sensitive information.
 ## Install
 
 ```sh
-wget -P /usr/local/bin https://github.com/3XX0/donkey/releases/download/v1.0.0/donkey
+wget -P /usr/local/bin https://github.com/3XX0/donkey/releases/download/v1.1.0/donkey
 chmod +x /usr/local/bin/donkey
 ```
 
 ## Usage
 
 ```sh
-donkey set <filename>
+donkey set <filename> [<count>]
 ```
 
-Create a one-time secret and display its identifier on standard output.\
+Create a one-time secret (by default) and display its identifier on standard output.\
 `filename` must point to either the path of the secret or `-` for standard input.
+In the case where `count` is specified, the secret will be made available exactly n-times instead,
+the exception being that it can not be used with the standard input modifier.
 
 ```sh
 donkey get <id> [<command>]
@@ -34,8 +36,8 @@ When a command is given, the secret is available through the file refered by the
 
 ```sh
 docker build --network=host
-             --build-arg FOO=$(donkey set secret.txt &)
-             --build-arg BAR=$(cat secret.txt | donkey set - &)
+             --build-arg FOO=$(cat secret.txt | donkey set - &)
+             --build-arg BAR=$(donkey set secret.txt 2 &)
              -f Dockerfile.sample .
 ```
 

@@ -36,7 +36,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define VERSION "1.0.0"
+#define VERSION "1.1.0"
 
 #ifndef TMP_DIR
 # define TMP_DIR "/dev/shm"
@@ -60,42 +60,50 @@ listen_unix(void)
 {
         struct sockaddr_un addr = {.sun_family = AF_UNIX};
         socklen_t addrlen = sizeof(addr);
-        struct ucred cred;
-        socklen_t credlen = sizeof(cred);
-        int srv, conn;
+        int fd;
 
-        if ((srv = socket(PF_UNIX, SOCK_STREAM, 0)) < 0)
+        if ((fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0)
                 return (-1);
-        if (bind(srv, (const struct sockaddr *)&addr, sizeof(sa_family_t)) < 0)
+        if (bind(fd, (const struct sockaddr *)&addr, sizeof(sa_family_t)) < 0)
                 goto out_socket;
-        if (getsockname(srv, (struct sockaddr *)&addr, &addrlen) < 0)
+        if (getsockname(fd, (struct sockaddr *)&addr, &addrlen) < 0)
                 goto out_socket;
         if (addrlen - sizeof(sa_family_t) <= 1) {
                 errno = EADDRNOTAVAIL;
                 goto out_socket;
         }
-        if (listen(srv, 1) < 0)
+        if (listen(fd, 1) < 0)
                 goto out_socket;
 
         if (write(STDOUT_FILENO, addr.sun_path + 1, strlen(addr.sun_path + 1)) < 0)
                 goto out_socket;
         close(STDOUT_FILENO);
+        return (fd);
 
-        if ((conn = accept4(srv, NULL, NULL, SOCK_NONBLOCK)) < 0)
-                goto out_socket;
-        if (getsockopt(conn, SOL_SOCKET, SO_PEERCRED, &cred, &credlen) < 0)
+ out_socket:
+        ignerr(close(fd));
+        return (-1);
+}
+
+static int
+accept_unix(int srv)
+{
+        struct ucred cred;
+        socklen_t credlen = sizeof(cred);
+        int fd;
+
+        if ((fd = accept4(srv, NULL, NULL, SOCK_NONBLOCK)) < 0)
+                return (-1);
+        if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &credlen) < 0)
                 goto out_accept;
         if (cred.uid != 0 || cred.gid != 0) {
                 errno = EPERM;
                 goto out_accept;
         }
-        xclose(srv);
-        return (conn);
+        return (fd);
 
  out_accept:
-        ignerr(close(conn));
- out_socket:
-        ignerr(close(srv));
+        ignerr(close(fd));
         return (-1);
 }
 
@@ -238,42 +246,53 @@ copy_file(int fd_out, int fd_in)
 }
 
 noreturn static void
-donkey_set(const char *file)
+donkey_set(const char *file, unsigned int count)
 {
+        const char *errmsg = NULL;
         struct rlimit limit = {0, 0};
-        int fd;
+        int srv, fd;
         void *addr;
         size_t size;
 
         if (setrlimit(RLIMIT_CORE, &limit) < 0)
                 err(EXIT_FAILURE, "could not set coredump limits");
-        if ((fd = listen_unix()) < 0)
+        if ((srv = listen_unix()) < 0)
                 err(EXIT_FAILURE, "could not establish connection");
 
-        if (!strcmp(file, "-")) {
-                if (copy_file(fd, STDIN_FILENO) < 0)
+        for (unsigned int i = 0; i < count; ++i) {
+                if ((fd = accept_unix(srv)) < 0)
                         goto out_listen;
-        } else {
-                if (open_memfile(file, &addr, &size) < 0)
-                        goto out_listen;
-                if (copy_data(fd, addr, size) < 0)
-                        goto out_mmap;
-                if (munmap(addr, size) < 0)
-                        goto out_listen;
+                if (!strcmp(file, "-")) {
+                        if (copy_file(fd, STDIN_FILENO) < 0)
+                                goto out_accept;
+                } else {
+                        if (open_memfile(file, &addr, &size) < 0)
+                                goto out_accept;
+                        if (copy_data(fd, addr, size) < 0)
+                                goto out_mmap;
+                        if (munmap(addr, size) < 0)
+                                goto out_accept;
+                }
+                xclose(fd);
         }
-        xclose(fd);
+        xclose(srv);
         exit(EXIT_SUCCESS);
 
  out_mmap:
         ignerr(munmap(addr, size));
- out_listen:
+ out_accept:
+        errmsg = errmsg ?: "could not copy payload data";
         ignerr(close(fd));
-        err(EXIT_FAILURE, "could not copy payload data");
+ out_listen:
+        errmsg = errmsg ?: "could not establish connection";
+        ignerr(close(srv));
+        err(EXIT_FAILURE, "%s", errmsg);
 }
 
 noreturn static void
 donkey_get(const char *id, const char * const cmd[])
 {
+        const char *errmsg = NULL;
         struct rlimit limit = {0, 0};
         int fd, tmp;
 
@@ -293,32 +312,37 @@ donkey_get(const char *id, const char * const cmd[])
                 if (copy_file(tmp, fd) < 0)
                         goto out_open;
                 execvp(cmd[0], (char * const *)cmd);
-                ignerr(close(tmp));
-                ignerr(close(fd));
-                err(EXIT_FAILURE, "could not execute command");
         }
 
+ /*out_exec:*/
+        errmsg = errmsg ?: "could not execute command";
  out_open:
         ignerr(close(tmp));
  out_connect:
+        errmsg = errmsg ?: "could not copy payload data";
         ignerr(close(fd));
-        err(EXIT_FAILURE, "could not copy payload data");
+        err(EXIT_FAILURE, "%s", errmsg);
 }
 
 int
 main(int argc, const char *argv[])
 {
+        long unsigned int n;
+
         if (argc == 3) {
                 if (!strcmp(argv[1], "set"))
-                        donkey_set(argv[2]);
+                        donkey_set(argv[2], 1);
                 else if (!strcmp(argv[1], "get"))
                         donkey_get(argv[2], NULL);
         } else if (argc >= 4) {
+                if (argc == 4 && !strcmp(argv[1], "set") && strcmp(argv[2], "-") &&
+                    (n = strtoul(argv[3], NULL, 10)) > 0)
+                        donkey_set(argv[2], (unsigned int)n);
                 if (!strcmp(argv[1], "get"))
                         donkey_get(argv[2], &argv[3]);
         }
 
         fprintf(stderr, "version: %s\n", VERSION);
-        fprintf(stderr, "usage: %s (set <filename> | get <id> [<command>])\n", basename(argv[0]));
+        fprintf(stderr, "usage: %s (set <filename> [<count>] | get <id> [<command>])\n", basename(argv[0]));
         return (1);
 }
